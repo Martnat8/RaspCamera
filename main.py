@@ -32,6 +32,7 @@ def main():
 
     while True:
         trigger.wait_for_press()   # rising edge
+        trigger.wait_for_release()
         idx += 1
         elapsed = time.monotonic() - t0
         en = int(enable.is_pressed)
