@@ -24,50 +24,44 @@ def setup_log():
             writer = csv.writer(f)
             writer.writerow(["index", "elapsed_s", "enable", "image_file", "capture_ok", "capture_msg"])
 
-def capture_image(save_path: Path) -> tuple[bool, str]:
+def capture_image(run_dir: Path, stem: str) -> tuple[bool, str, str]:
     """
-    Canon-stable capture:
-      1) trigger shutter via eosremoterelease
-      2) wait for file event and download to save_path
-    Returns (ok, message).
+    One-call Canon capture:
+      - trigger shutter
+      - wait for file event and download
+    Returns (ok, saved_filename, message).
     """
-    # (optional but helps) capture to RAM so download is immediate
-    set_target = ["gphoto2", "--quiet", "--set-config", "capturetarget=0"]
+    pattern = run_dir / f"{stem}_%03n.%C"
 
-    trigger = ["gphoto2", "--quiet", "--set-config", "eosremoterelease=Immediate"]
-
-    download = [
+    cmd = [
         "gphoto2",
-        "--quiet",
-        "--wait-event-and-download=10s",
-        "--filename", str(save_path),
+        "--set-config", "eosremoterelease=Immediate",
+        "--wait-event-and-download=15s",
+        "--filename", str(pattern),
         "--force-overwrite",
     ]
 
     try:
-        # Don't fail the whole capture if capturetarget isn't supported
-        subprocess.run(set_target, capture_output=True, text=True, timeout=10)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        if r.returncode != 0:
+            msg = (r.stderr or r.stdout or "").strip()
+            return False, "", (msg[:200] if msg else f"gphoto2 failed rc={r.returncode}")
 
-        r1 = subprocess.run(trigger, capture_output=True, text=True, timeout=20)
-        if r1.returncode != 0:
-            msg = (r1.stderr or r1.stdout or "").strip()
-            return False, (msg[:200] if msg else f"trigger failed rc={r1.returncode}")
+        matches = sorted(
+            run_dir.glob(f"{stem}_*.*"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True
+        )
+        if not matches:
+            return False, "", "gphoto2 returned ok but no file found"
 
-        r2 = subprocess.run(download, capture_output=True, text=True, timeout=30)
-        if r2.returncode != 0:
-            msg = (r2.stderr or r2.stdout or "").strip()
-            return False, (msg[:200] if msg else f"download failed rc={r2.returncode}")
-
-        # sanity: ensure file exists
-        if not save_path.exists():
-            return False, "download reported ok but file missing"
-
-        return True, "ok"
+        return True, matches[0].name, "ok"
 
     except FileNotFoundError:
-        return False, "gphoto2 not found (install with: sudo apt install -y gphoto2)"
+        return False, "", "gphoto2 not found (sudo apt install -y gphoto2)"
     except subprocess.TimeoutExpired:
-        return False, "capture timeout"
+        return False, "", "capture timeout"
+
 
 
 def main():
