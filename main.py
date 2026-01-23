@@ -1,5 +1,6 @@
 import time
 import csv
+import subprocess
 from pathlib import Path
 from gpiozero import Button
 from datetime import datetime
@@ -8,20 +9,44 @@ from datetime import datetime
 TRIGGER_GPIO = 17
 ENABLE_GPIO  = 27
 
+# Date-based run folder
 BASE_LOG_DIR = Path.home() / "pi_logs"
 RUN_DATE = datetime.now().strftime("%Y_%m_%d")
-
 RUN_DIR = BASE_LOG_DIR / f"Run_{RUN_DATE}"
-LOG_FILE = RUN_DIR / f"trigger_log_{RUN_DATE}.csv"
 
+# Log file inside run folder (one per day)
+LOG_FILE = RUN_DIR / f"trigger_log_{RUN_DATE}.csv"
 
 def setup_log():
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     if not LOG_FILE.exists():
         with open(LOG_FILE, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["index", "elapsed_s", "enable"])
+            writer.writerow(["index", "elapsed_s", "enable", "image_file", "capture_ok", "capture_msg"])
 
+def capture_image(save_path: Path) -> tuple[bool, str]:
+    """
+    Capture an image from the connected camera and download it to save_path.
+    Returns (ok, message).
+    """
+    cmd = [
+        "gphoto2",
+        "--quiet",
+        "--capture-image-and-download",
+        "--filename", str(save_path),
+        "--force-overwrite",
+    ]
+
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if res.returncode == 0:
+            return True, "ok"
+        msg = (res.stderr or res.stdout or "").strip()
+        return False, msg[:200] if msg else f"gphoto2 failed rc={res.returncode}"
+    except FileNotFoundError:
+        return False, "gphoto2 not found (install with: sudo apt install -y gphoto2)"
+    except subprocess.TimeoutExpired:
+        return False, "capture timeout"
 
 def main():
     setup_log()
@@ -35,9 +60,11 @@ def main():
     print("Pi trigger listener running")
     print(f"Trigger: GPIO {TRIGGER_GPIO}")
     print(f"Enable : GPIO {ENABLE_GPIO}")
+    print(f"Run dir: {RUN_DIR}")
+    print(f"Log    : {LOG_FILE}")
 
     while True:
-        trigger.wait_for_press()   # rising edge
+        trigger.wait_for_press()
         trigger.wait_for_release()
 
         if not enable.is_pressed:
@@ -47,10 +74,15 @@ def main():
         elapsed = time.monotonic() - t0
         en = int(enable.is_pressed)
 
-        with open(LOG_FILE, "a", newline="") as f:
-            csv.writer(f).writerow([idx, f"{elapsed:.6f}", en])
+        image_name = f"img_{idx:06d}.jpg"
+        image_path = RUN_DIR / image_name
 
-        print(f"#{idx}  t={elapsed:.3f}s  enable={en}")
+        ok, msg = capture_image(image_path)
+
+        with open(LOG_FILE, "a", newline="") as f:
+            csv.writer(f).writerow([idx, f"{elapsed:.6f}", en, image_name, int(ok), msg])
+
+        print(f"#{idx}  t={elapsed:.3f}s  enable={en}  file={image_name}  ok={ok}")
 
 if __name__ == "__main__":
     main()
