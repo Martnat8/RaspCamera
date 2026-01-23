@@ -26,27 +26,49 @@ def setup_log():
 
 def capture_image(save_path: Path) -> tuple[bool, str]:
     """
-    Capture an image from the connected camera and download it to save_path.
+    Canon-stable capture:
+      1) trigger shutter via eosremoterelease
+      2) wait for file event and download to save_path
     Returns (ok, message).
     """
-    cmd = [
+    # (optional but helps) capture to RAM so download is immediate
+    set_target = ["gphoto2", "--quiet", "--set-config", "capturetarget=0"]
+
+    trigger = ["gphoto2", "--quiet", "--set-config", "eosremoterelease=Immediate"]
+
+    download = [
         "gphoto2",
         "--quiet",
-        "--capture-image-and-download",
+        "--wait-event-and-download=10s",
         "--filename", str(save_path),
         "--force-overwrite",
     ]
 
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if res.returncode == 0:
-            return True, "ok"
-        msg = (res.stderr or res.stdout or "").strip()
-        return False, msg[:200] if msg else f"gphoto2 failed rc={res.returncode}"
+        # Don't fail the whole capture if capturetarget isn't supported
+        subprocess.run(set_target, capture_output=True, text=True, timeout=10)
+
+        r1 = subprocess.run(trigger, capture_output=True, text=True, timeout=20)
+        if r1.returncode != 0:
+            msg = (r1.stderr or r1.stdout or "").strip()
+            return False, (msg[:200] if msg else f"trigger failed rc={r1.returncode}")
+
+        r2 = subprocess.run(download, capture_output=True, text=True, timeout=30)
+        if r2.returncode != 0:
+            msg = (r2.stderr or r2.stdout or "").strip()
+            return False, (msg[:200] if msg else f"download failed rc={r2.returncode}")
+
+        # sanity: ensure file exists
+        if not save_path.exists():
+            return False, "download reported ok but file missing"
+
+        return True, "ok"
+
     except FileNotFoundError:
         return False, "gphoto2 not found (install with: sudo apt install -y gphoto2)"
     except subprocess.TimeoutExpired:
         return False, "capture timeout"
+
 
 def main():
     setup_log()
@@ -82,7 +104,8 @@ def main():
         with open(LOG_FILE, "a", newline="") as f:
             csv.writer(f).writerow([idx, f"{elapsed:.6f}", en, image_name, int(ok), msg])
 
-        print(f"#{idx}  t={elapsed:.3f}s  enable={en}  file={image_name}  ok={ok}")
+        print(f"#{idx}  t={elapsed:.3f}s  enable={en}  file={image_name}  ok={ok}  msg={msg}")
+
 
 if __name__ == "__main__":
     main()
