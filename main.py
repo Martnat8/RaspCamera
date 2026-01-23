@@ -17,12 +17,14 @@ RUN_DIR = BASE_LOG_DIR / f"Run_{RUN_DATE}"
 # Log file inside run folder (one per day)
 LOG_FILE = RUN_DIR / f"trigger_log_{RUN_DATE}.csv"
 
+
 def setup_log():
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     if not LOG_FILE.exists():
         with open(LOG_FILE, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["index", "elapsed_s", "enable", "image_file", "capture_ok", "capture_msg"])
+
 
 def capture_image(run_dir: Path, stem: str) -> tuple[bool, str, str]:
     """
@@ -31,6 +33,7 @@ def capture_image(run_dir: Path, stem: str) -> tuple[bool, str, str]:
       - wait for file event and download
     Returns (ok, saved_filename, message).
     """
+    # %C = camera-chosen extension (jpg/JPG/CR2/etc), %03n = unique numbering
     pattern = run_dir / f"{stem}_%03n.%C"
 
     cmd = [
@@ -47,10 +50,11 @@ def capture_image(run_dir: Path, stem: str) -> tuple[bool, str, str]:
             msg = (r.stderr or r.stdout or "").strip()
             return False, "", (msg[:200] if msg else f"gphoto2 failed rc={r.returncode}")
 
+        # Find newest file matching this stem
         matches = sorted(
             run_dir.glob(f"{stem}_*.*"),
             key=lambda p: p.stat().st_mtime,
-            reverse=True
+            reverse=True,
         )
         if not matches:
             return False, "", "gphoto2 returned ok but no file found"
@@ -61,7 +65,6 @@ def capture_image(run_dir: Path, stem: str) -> tuple[bool, str, str]:
         return False, "", "gphoto2 not found (sudo apt install -y gphoto2)"
     except subprocess.TimeoutExpired:
         return False, "", "capture timeout"
-
 
 
 def main():
@@ -94,11 +97,13 @@ def main():
 
         ok, saved_name, msg = capture_image(RUN_DIR, image_stem)
 
+        # If capture failed, still log the intended pattern for traceability
+        image_label = saved_name if ok else f"{image_stem}_%03n.%C"
+
         with open(LOG_FILE, "a", newline="") as f:
-            csv.writer(f).writerow([idx, f"{elapsed:.6f}", en, saved_name, int(ok), msg])
+            csv.writer(f).writerow([idx, f"{elapsed:.6f}", en, image_label, int(ok), msg])
 
-        print(f"#{idx}  t={elapsed:.3f}s  enable={en}  file={saved_name}  ok={ok}  msg={msg}")
-
+        print(f"#{idx}  t={elapsed:.3f}s  enable={en}  file={image_label}  ok={ok}  msg={msg}")
 
 
 if __name__ == "__main__":
