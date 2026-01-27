@@ -1,74 +1,25 @@
 import time
-import csv
-import subprocess
-from pathlib import Path
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from gpiozero import Button
-from datetime import datetime
+
+from camera_utils import (
+    get_run_dir,
+    get_log_file,
+    init_log,
+    append_log_row,
+    capture_image_gphoto2,
+)
 
 # BCM numbering
 TRIGGER_GPIO = 17
 ENABLE_GPIO  = 27
 
-# Date-based run folder
-BASE_LOG_DIR = Path.home() / "pi_logs"
-RUN_DATE = datetime.now().strftime("%Y_%m_%d")
-RUN_DIR = BASE_LOG_DIR / f"Run_{RUN_DATE}"
-
-# Log file inside run folder (one per day)
-LOG_FILE = RUN_DIR / f"trigger_log_{RUN_DATE}.csv"
-
-
-def setup_log():
-    RUN_DIR.mkdir(parents=True, exist_ok=True)
-    if not LOG_FILE.exists():
-        with open(LOG_FILE, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["index", "elapsed_s", "enable", "image_file", "capture_ok", "capture_msg"])
-
-
-def capture_image(run_dir: Path, stem: str) -> tuple[bool, str, str]:
-    """
-    One-call Canon capture:
-      - trigger shutter
-      - wait for file event and download
-    Returns (ok, saved_filename, message).
-    """
-    # %C = camera-chosen extension (jpg/JPG/CR2/etc), %03n = unique numbering
-    pattern = run_dir / f"{stem}_%03n.%C"
-
-    cmd = [
-        "gphoto2",
-        "--set-config", "eosremoterelease=Immediate",
-        "--wait-event-and-download=15s",
-        "--filename", str(pattern),
-        "--force-overwrite",
-    ]
-
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
-        if r.returncode != 0:
-            msg = (r.stderr or r.stdout or "").strip()
-            return False, "", (msg[:200] if msg else f"gphoto2 failed rc={r.returncode}")
-
-        # Find newest file matching this stem
-        matches = sorted(
-            run_dir.glob(f"{stem}_*.*"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        if not matches:
-            return False, "", "gphoto2 returned ok but no file found"
-
-        return True, matches[0].name, "ok"
-
-    except FileNotFoundError:
-        return False, "", "gphoto2 not found (sudo apt install -y gphoto2)"
-    except subprocess.TimeoutExpired:
-        return False, "", "capture timeout"
-
 
 def main():
-    setup_log()
+    run_dir = get_run_dir()
+    log_file = get_log_file(run_dir)
+    init_log(log_file)
 
     trigger = Button(TRIGGER_GPIO, pull_up=False, bounce_time=0.05)
     enable  = Button(ENABLE_GPIO,  pull_up=False)
@@ -79,31 +30,56 @@ def main():
     print("Pi trigger listener running")
     print(f"Trigger: GPIO {TRIGGER_GPIO}")
     print(f"Enable : GPIO {ENABLE_GPIO}")
-    print(f"Run dir: {RUN_DIR}")
-    print(f"Log    : {LOG_FILE}")
+    print(f"Run dir: {run_dir}")
+    print(f"Log    : {log_file}")
 
-    while True:
-        trigger.wait_for_press()
-        trigger.wait_for_release()
+    # Queue of pending events: (idx, elapsed, enable_state, stem)
+    pending = deque()
 
+    def on_trigger():
+        nonlocal idx
+        # Only queue events when enable is ON at the moment of the trigger edge
         if not enable.is_pressed:
-            continue
+            return
 
         idx += 1
         elapsed = time.monotonic() - t0
         en = int(enable.is_pressed)
+        stem = f"img_{idx:06d}"
+        pending.append((idx, elapsed, en, stem))
 
-        image_stem = f"img_{idx:06d}"
+    trigger.when_pressed = on_trigger
 
-        ok, saved_name, msg = capture_image(RUN_DIR, image_stem)
+    # One worker so camera commands never overlap
+    executor = ThreadPoolExecutor(max_workers=1)
+    in_flight = None  # (future, idx, elapsed, en, stem)
 
-        # If capture failed, still log the intended pattern for traceability
-        image_label = saved_name if ok else f"{image_stem}_%03n.%C"
+    try:
+        while True:
+            # If nothing in flight and we have pending triggers, start next capture
+            if in_flight is None and pending:
+                i, elapsed, en, stem = pending.popleft()
+                fut = executor.submit(capture_image_gphoto2, run_dir, stem)
+                in_flight = (fut, i, elapsed, en, stem)
 
-        with open(LOG_FILE, "a", newline="") as f:
-            csv.writer(f).writerow([idx, f"{elapsed:.6f}", en, image_label, int(ok), msg])
+            # If a capture finished, log it
+            if in_flight is not None:
+                fut, i, elapsed, en, stem = in_flight
+                if fut.done():
+                    ok, saved_name, msg = fut.result()
+                    image_label = saved_name if ok else f"{stem}_%03n.%C"
 
-        print(f"#{idx}  t={elapsed:.3f}s  enable={en}  file={image_label}  ok={ok}  msg={msg}")
+                    append_log_row(log_file, [i, f"{elapsed:.6f}", en, image_label, int(ok), msg])
+                    print(f"#{i}  t={elapsed:.3f}s  enable={en}  file={image_label}  ok={ok}  msg={msg}")
+
+                    in_flight = None
+
+            time.sleep(0.01)  # small idle to reduce CPU
+
+    except KeyboardInterrupt:
+        print("\nStopping (Ctrl+C).")
+    finally:
+        executor.shutdown(wait=False)
 
 
 if __name__ == "__main__":
