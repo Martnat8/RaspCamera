@@ -43,7 +43,7 @@ def main() -> None:
     args = parse_args()
 
     store = ExperimentStore(args.base, mode=args.mode)
-    print(f"Run folder: {store.run_dir}")
+    print(f"Run folder: {store.git }")
     print(f"Photos:     {store.photos_dir}")
     print(f"Log:        {store.log_csv}")
     print(f"State:      {store.state_json}")
