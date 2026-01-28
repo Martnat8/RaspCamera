@@ -25,30 +25,12 @@ def kill_gvfs_grabbers() -> tuple[bool, str]:
 
 
 def capture_image_gphoto2(run_dir: Path, stem: str) -> tuple[bool, str, str]:
-    """
-    Canon EOS T3i known-good flow:
-      - set capturetarget=0 (RAM)
-      - set eosremoterelease=Immediate
-      - wait for event and download in the SAME gphoto2 session
-    Returns (ok, saved_filename, message).
-    """
-    # Do per-session setup (fast, and avoids state issues)
-    subprocess.run(
-        ["gphoto2", "--quiet", "--set-config", "capturetarget=0"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    subprocess.run(
-        ["gphoto2", "--quiet", "--set-config", "eosremoterelease=Immediate"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    pattern = f"{stem}_%03n.%C"
 
-    pattern = f"{stem}_%03n.%C"  # relative to run_dir (because we set cwd)
     cmd = [
         "gphoto2",
+        "--set-config", "capturetarget=0",
+        "--set-config", "eosremoterelease=Immediate",
         "--wait-event-and-download=30s",
         "--filename", pattern,
         "--force-overwrite",
@@ -70,7 +52,6 @@ def capture_image_gphoto2(run_dir: Path, stem: str) -> tuple[bool, str, str]:
             combo = (err + "\n" + out).strip()
             return False, "", (combo[:400] if combo else f"gphoto2 failed rc={r.returncode}")
 
-        # Find newest file that matches our stem
         matches = sorted(
             run_dir.glob(f"{stem}_*"),
             key=lambda p: p.stat().st_mtime,
