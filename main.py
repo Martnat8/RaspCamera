@@ -1,85 +1,99 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
 import time
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from gpiozero import Button
+from datetime import datetime
+from pathlib import Path
 
-from camera_utils import (
-    get_run_dir,
-    get_log_file,
-    init_log,
-    append_log_row,
-    capture_image_gphoto2,
-)
+from gpiozero import DigitalInputDevice
 
-# BCM numbering
+from camera_utils import _run, ensure_dir, GPhotoError
+
 TRIGGER_GPIO = 17
 ENABLE_GPIO  = 27
 
+PHOTOS_DIR = Path("./photos").resolve()
+POLL_S = 0.005  # 5 ms polling
 
-def main():
-    run_dir = get_run_dir()
-    log_file = get_log_file(run_dir)
-    init_log(log_file)
 
-    trigger = Button(TRIGGER_GPIO, pull_up=False, bounce_time=0.05)
-    enable  = Button(ENABLE_GPIO,  pull_up=False)
+def capture_to_filename(out_path: Path, retries: int = 6) -> None:
+    """
+    Capture + download directly to out_path using gphoto2, with retries via camera_utils._run().
+    """
+    ensure_dir(out_path.parent)
 
-    t0 = time.monotonic()
-    idx = 0
+    _run(
+        [
+            "gphoto2",
+            "--capture-image-and-download",
+            "--force-overwrite",
+            "--filename",
+            str(out_path),
+        ],
+        retries=retries,
+        timeout_s=90,
+    )
 
-    print("Pi trigger listener running")
-    print(f"Trigger: GPIO {TRIGGER_GPIO}")
-    print(f"Enable : GPIO {ENABLE_GPIO}")
-    print(f"Run dir: {run_dir}")
-    print(f"Log    : {log_file}")
+    if not out_path.exists():
+        raise GPhotoError(f"Capture reported success but file not found: {out_path}")
 
-    # Queue of pending events: (idx, elapsed, enable_state, stem)
-    pending = deque()
 
-    def on_trigger():
-        nonlocal idx
-        # Only queue events when enable is ON at the moment of the trigger edge
-        if not enable.is_pressed:
-            return
+def main() -> None:
+    ensure_dir(PHOTOS_DIR)
 
-        idx += 1
-        elapsed = time.monotonic() - t0
-        en = int(enable.is_pressed)
-        stem = f"img_{idx:06d}"
-        pending.append((idx, elapsed, en, stem))
+    # Inputs with pull-downs: OFF=0, ON=1.
+    # If your wiring already has external pull resistors, set pull_up=None.
+    enable = DigitalInputDevice(ENABLE_GPIO, pull_up=False)
+    trigger = DigitalInputDevice(TRIGGER_GPIO, pull_up=False)
 
-    trigger.when_pressed = on_trigger
+    # Counter starts at 1 each run (simple). If you want persistence across reboots,
+    # tell me and I'll add a tiny counter file.
+    count = 1
 
-    # One worker so camera commands never overlap
-    executor = ThreadPoolExecutor(max_workers=1)
-    in_flight = None  # (future, idx, elapsed, en, stem)
+    # Edge/re-arm logic
+    armed = True
+    prev_trigger = trigger.value
+
+    print(f"READY. Enable=GPIO{ENABLE_GPIO}, Trigger=GPIO{TRIGGER_GPIO}")
+    print(f"Saving to: {PHOTOS_DIR}")
 
     try:
         while True:
-            # If nothing in flight and we have pending triggers, start next capture
-            if in_flight is None and pending:
-                i, elapsed, en, stem = pending.popleft()
-                fut = executor.submit(capture_image_gphoto2, run_dir, stem)
-                in_flight = (fut, i, elapsed, en, stem)
+            en = enable.value
+            tr = trigger.value
 
-            # If a capture finished, log it
-            if in_flight is not None:
-                fut, i, elapsed, en, stem = in_flight
-                if fut.done():
-                    ok, saved_name, msg = fut.result()
-                    image_label = saved_name if ok else f"{stem}_%03n.%C"
+            # Rising edge detection: prev 0 -> current 1
+            rising = (not prev_trigger) and tr
 
-                    append_log_row(log_file, [i, f"{elapsed:.6f}", en, image_label, int(ok), msg])
-                    print(f"#{i}  t={elapsed:.3f}s  enable={en}  file={image_label}  ok={ok}  msg={msg}")
+            if armed and rising:
+                if en:
+                    date_str = datetime.now().strftime("%d%m%Y")
+                    filename = f"{date_str}_{count:05d}.jpg"
+                    out_path = PHOTOS_DIR / filename
 
-                    in_flight = None
+                    try:
+                        capture_to_filename(out_path)
+                        print(f"Captured: {out_path}")
+                        count += 1
+                    except GPhotoError as e:
+                        print(f"[ERROR] capture failed: {e}")
+                        # Do NOT increment count on failure
+                else:
+                    # Enable is off: ignore this trigger, do not increment
+                    print("Trigger ignored (ENABLE low)")
 
-            time.sleep(0.01)  # small idle to reduce CPU
+                # Regardless of enable, require trigger to go LOW before re-arming
+                armed = False
+
+            # Re-arm only after we see the falling edge / trigger low again
+            if not armed and (not tr):
+                armed = True
+
+            prev_trigger = tr
+            time.sleep(POLL_S)
 
     except KeyboardInterrupt:
-        print("\nStopping (Ctrl+C).")
-    finally:
-        executor.shutdown(wait=False)
+        print("\nStopped.")
 
 
 if __name__ == "__main__":
