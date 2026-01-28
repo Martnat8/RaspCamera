@@ -155,6 +155,30 @@ Ctrl + C
 ```
 
 ---
+## Viewing Images Over SSH (HTTP Preview)
+
+Because SSH is text-only, images cannot be displayed directly in the terminal. A simple workaround is to serve the images over HTTP from the Raspberry Pi and view them in a web browser.
+
+### Start a temporary HTTP server on the Raspberry Pi
+From the directory containing the images:
+
+```bash
+python3 -m http.server 8000
+```
+
+### View images from another machine
+On your local computer, open a web browser and navigate to:
+
+```
+http://<raspi-hostname-or-ip>:8000
+```
+
+You can then click and view images while the experiment is running.
+
+### Notes
+- This server is temporary and stops when you press `Ctrl + C`
+- The server is read-only unless additional configuration is added
+- Suitable for quick visual inspection during experiments
 
 ## Design Goals
 
