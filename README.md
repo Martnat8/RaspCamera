@@ -2,6 +2,8 @@
 
 This repository contains a **headless, crash-resilient image capture system** for a Canon EOS T3i (600D) controlled via **gphoto2** on a **Raspberry Pi 5**.
 
+** Super vibe coded with generative AI **
+
 The system listens to GPIO trigger lines, conditionally captures images, stores them on the Raspberry Pi, and logs every trigger event for later analysis. It is designed for **long-running experiments** and supports clean resume after crashes or reboots.
 
 ---
