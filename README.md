@@ -1,8 +1,12 @@
 # Raspberry Pi + Canon EOS T3i Triggered Capture System
 
-This repository contains a **headless, crash-resilient image capture system** for a Canon EOS T3i (600D) controlled via **gphoto2** on a **Raspberry Pi 5**.
+This repository contains a **crash-resilient image capture system** for a Canon EOS T3i (600D) controlled via **gphoto2** on a **Raspberry Pi 5**.
 
-** Super vibe coded with generative AI **
+The system is designed to run from a terminal either:
+- directly on a Raspberry Pi with a connected monitor, keyboard, and mouse
+- or remotely over SSH in a headless configuration
+
+> Developed with extensive use of generative AI-assisted coding tools.
 
 The system listens to GPIO trigger lines, conditionally captures images, stores them on the Raspberry Pi, and logs every trigger event for later analysis. It is designed for **long-running experiments** and supports clean resume after crashes or reboots.
 
@@ -10,7 +14,7 @@ The system listens to GPIO trigger lines, conditionally captures images, stores 
 
 ## Features
 
-- Headless operation (SSH only, no GUI)
+- Terminal-based operation (local monitor or SSH)
 - Canon EOS capture via `gphoto2`
 - GPIO-controlled triggering
 - Enable / disable gating
@@ -20,12 +24,56 @@ The system listens to GPIO trigger lines, conditionally captures images, stores 
 - Resume after crash or reboot
 - CSV trigger log with persistent state
 - No image overwrites
+- Retry handling for transient camera communication errors
+
+---
+
+## Tested On
+
+- Raspberry Pi 5
+- Raspberry Pi OS Bookworm
+- Canon EOS Rebel T3i (600D)
+
+---
+
+## Quick Start
+
+On a fresh Raspberry Pi OS installation:
+
+```bash
+sudo apt install -y git
+
+git clone <repo-url>
+cd <repo-name>
+
+chmod +x setup.sh
+./setup.sh
+```
+
+Prepare the camera system:
+
+```bash
+python3 startup.py
+```
+
+Start a new experiment:
+
+```bash
+python3 main.py --base ./experiments/ExpA --mode restart
+```
+
+Resume the latest experiment:
+
+```bash
+python3 main.py --base ./experiments/ExpA --mode resume
+```
 
 ---
 
 ## Hardware Setup
 
 ### Camera
+
 - Canon EOS Rebel T3i (600D)
 - USB connected to Raspberry Pi
 - Lens in **MF**
@@ -34,41 +82,25 @@ The system listens to GPIO trigger lines, conditionally captures images, stores 
 - Image review **off**
 
 ### GPIO
-| Signal  | GPIO | Direction | Notes |
-|--------|------|-----------|-------|
+
+| Signal | GPIO | Direction | Notes |
+|---|---|---|---|
 | TRIGGER | 17 | Input | Rising edge triggers capture |
-| ENABLE  | 27 | Input | Must be HIGH to allow capture |
+| ENABLE | 27 | Input | Must be HIGH to allow capture |
 
 Inputs are assumed **active-high** with pull-downs.
 
 ---
 
-## Software Requirements
-
-On the Raspberry Pi:
-
-```bash
-sudo apt update
-sudo apt install -y gphoto2 python3-gpiozero jq
-```
-
-Remove USB grabbers (recommended for stability):
-
-```bash
-sudo apt purge -y gvfs-backends
-sudo reboot
-```
-
----
-
 ## Repository Structure
 
-```
+```text
 .
 ├── camera_utils.py        # gphoto2 helpers and retry logic
 ├── experiment_store.py    # Run folder management, counters, CSV logging, resume logic
 ├── startup.py             # One-time system preparation for long runs
 ├── main.py                # GPIO-driven experiment runner
+├── setup.sh               # Automated Raspberry Pi setup script
 └── README.md
 ```
 
@@ -77,6 +109,7 @@ sudo reboot
 ## How It Works
 
 ### Trigger Logic
+
 - Rising edge on **TRIGGER**
 - If **ENABLE = HIGH** → capture image
 - If **ENABLE = LOW** → no capture
@@ -85,8 +118,10 @@ sudo reboot
 - Image count increments **only on successful capture**
 
 ### File Naming
+
 Images are saved as:
-```
+
+```text
 DDMMYYYY_00001.jpg
 ```
 
@@ -96,7 +131,7 @@ DDMMYYYY_00001.jpg
 
 Each experiment run creates a dedicated folder inside the user-provided base directory:
 
-```
+```text
 experiments/ExpA/
 └── Run_YYYYMMDD_HHMMSS/
     ├── photos/
@@ -107,14 +142,17 @@ experiments/ExpA/
 ```
 
 ### `log.csv`
+
 One row is written **per trigger event**, regardless of whether an image was captured:
 
-```
+```text
 timestamp,trigger_index,enable_state,captured,filename
 ```
 
 ### `state.json`
+
 Stores persistent state to allow clean resume after interruption:
+
 - Next image index
 - Next trigger index
 - Run directory path
@@ -124,21 +162,24 @@ Stores persistent state to allow clean resume after interruption:
 
 ## Usage
 
-### 1. Prepare the system
+### 1. Prepare the System
+
 Run once after boot to ensure the camera and system are ready for a long experiment:
 
 ```bash
 python3 startup.py
 ```
 
-### 2. Start a new experiment run
+### 2. Start a New Experiment Run
+
 Creates a new run folder inside the specified base directory:
 
 ```bash
 python3 main.py --base ./experiments/ExpA --mode restart
 ```
 
-### 3. Resume an existing run
+### 3. Resume an Existing Run
+
 Continues the most recent run folder inside the base directory:
 
 ```bash
@@ -146,15 +187,37 @@ python3 main.py --base ./experiments/ExpA --mode resume
 ```
 
 Resume behavior:
+
 - Image numbering continues from the last successful capture
 - Trigger indexing continues from the last trigger
 - New entries are appended to `log.csv`
 - Existing images are never overwritten
 
-### Stop the experiment
+### Stop the Experiment
+
 ```text
 Ctrl + C
 ```
+
+---
+
+## Viewing Images Over SSH
+
+When running over SSH, images cannot be displayed directly in the terminal. A simple workaround is to temporarily serve the image directory over HTTP.
+
+From the image directory:
+
+```bash
+python3 -m http.server 8000
+```
+
+Then, from another computer on the same network, open:
+
+```text
+http://<raspi-ip-address>:8000
+```
+
+This allows live viewing of captured images while the experiment is running.
 
 ---
 
@@ -167,21 +230,14 @@ Ctrl + C
   - Capture logic
   - Data storage
 - Auditability for experiments
+- Long-duration experiment stability
 
 ---
 
 ## Notes
 
-- Images are stored **only on the Pi**, not retained on the camera SD card
+- Images are stored **only on the Raspberry Pi**, not retained on the camera SD card
 - Canon EOS remote capture behavior varies by model; this setup has been validated on the T3i
 - For very long runs, use a dummy battery / DC coupler
+- Desktop camera auto-mounting can interfere with `gphoto2`; `setup.sh` removes common USB camera grabbers automatically
 
----
-
-## Future Extensions (Optional)
-
-- Systemd service for auto-start
-- Trigger debounce / rate limiting
-- Disk space guardrails
-- Metadata export per run
-- Analysis scripts

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import signal
+import sys
 import argparse
 import time
 from pathlib import Path
@@ -14,6 +16,12 @@ TRIGGER_GPIO = 17
 ENABLE_GPIO  = 27
 POLL_S = 0.005  # 5 ms polling
 
+def cleanup_and_exit(signum=None, frame=None):
+    print("\nStopping capture system...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, cleanup_and_exit)
+signal.signal(signal.SIGTERM, cleanup_and_exit)
 
 def capture_to_path(out_path: Path, retries: int = 6) -> None:
     ensure_dir(out_path.parent)
