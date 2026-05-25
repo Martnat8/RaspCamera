@@ -56,13 +56,8 @@ cd /path/to/your/repo-name
 # 1. Clear background processes and check camera connection
 python3 startup.py
 
-# 2. Run the experiment (Choose ONE of the options below)
-
-# Option A: Start a brand-new experiment run (resets index to 00001)
-python3 main.py --base ./experiments/ExpA --mode restart
-
-# Option B: Resume the latest experiment run (keeps existing indices)
-python3 main.py --base ./experiments/ExpA --mode resume
+# 2. Run the experiment (terminal will prompt user input)
+python3 main.py
 
 # To STOP the experiment at any time: Press Ctrl + C
 
@@ -94,7 +89,7 @@ Inputs are assumed **active-high** with pull-downs.
 
 ## Repository Structure
 
-```text
+```
 .
 ├── camera_utils.py        # gphoto2 helpers and retry logic
 ├── experiment_store.py    # Run folder management, counters, CSV logging, resume logic
@@ -132,8 +127,8 @@ DDMMYYYY_00001.jpg
 Each experiment run creates a dedicated folder inside the user-provided base directory:
 
 ```text
-experiments/ExpA/
-└── Run_YYYYMMDD_HHMMSS/
+experiments/<EXPERIMENT-NAME>/
+└──<EXPERIMENT-NAME>_Run_<#>/
     ├── photos/
     │   ├── DDMMYYYY_00001.jpg
     │   ├── DDMMYYYY_00002.jpg
@@ -175,16 +170,9 @@ python3 startup.py
 Creates a new run folder inside the specified base directory:
 
 ```bash
-python3 main.py --base ./experiments/ExpA --mode restart
+python3 main.py 
 ```
 
-### 3. Resume an Existing Run
-
-Continues the most recent run folder inside the base directory:
-
-```bash
-python3 main.py --base ./experiments/ExpA --mode resume
-```
 
 Resume behavior:
 
