@@ -25,19 +25,40 @@ signal.signal(signal.SIGTERM, cleanup_and_exit)
 
 def capture_to_path(out_path: Path, retries: int = 6) -> None:
     ensure_dir(out_path.parent)
-    _run(
-        [
-            "gphoto2",
-            "--capture-image-and-download",
-            "--force-overwrite",
-            "--filename",
-            str(out_path),
-        ],
-        retries=retries,
-        timeout_s=90,
-    )
+    
+    # 1. Use a unique, safe temporary filename that contains no risky characters
+    tmp_path = out_path.with_name(f"gphoto_tmp_{int(time.time())}.jpg")
+    
+    try:
+        _run(
+            [
+                "gphoto2",
+                "--capture-image-and-download",
+                "--force-overwrite",
+                "--filename",
+                str(tmp_path),  # Safe, controlled string passed to gphoto2
+            ],
+            retries=retries,
+            timeout_s=90,
+        )
+        
+        if not tmp_path.exists():
+            raise GPhotoError(f"Capture reported success but temp file not found: {tmp_path}")
+            
+        # 2. Let Python safely rename it to your target DDMMYYYY_xxxxx.jpg format
+        tmp_path.replace(out_path)
+        
+    except Exception as e:
+        # Clean up the temp file if it was created but the process failed
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+        raise e
+
     if not out_path.exists():
-        raise GPhotoError(f"Capture reported success but file not found: {out_path}")
+        raise GPhotoError(f"Capture reported success but final file not found: {out_path}")
 
 
 def parse_args() -> argparse.Namespace:
