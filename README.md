@@ -50,23 +50,21 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-Prepare the camera system:
+# Navigate to the project directory
+cd /path/to/your/repo-name
 
-```bash
+# 1. Clear background processes and check camera connection
 python3 startup.py
-```
 
-Start a new experiment:
+# 2. Run the experiment (Choose ONE of the options below)
 
-```bash
+# Option A: Start a brand-new experiment run (resets index to 00001)
 python3 main.py --base ./experiments/ExpA --mode restart
-```
 
-Resume the latest experiment:
-
-```bash
+# Option B: Resume the latest experiment run (keeps existing indices)
 python3 main.py --base ./experiments/ExpA --mode resume
-```
+
+# To STOP the experiment at any time: Press Ctrl + C
 
 ---
 
@@ -83,10 +81,12 @@ python3 main.py --base ./experiments/ExpA --mode resume
 
 ### GPIO
 
-| Signal | GPIO | Direction | Notes |
-|---|---|---|---|
-| TRIGGER | 17 | Input | Rising edge triggers capture |
-| ENABLE | 27 | Input | Must be HIGH to allow capture |
+### GPIO
+
+| Signal | GPIO | Wire Color | Direction | Notes |
+|---|---|---|---|---|
+| TRIGGER | 17 | Yellow | Input | Rising edge triggers capture |
+| ENABLE | 27 | Green | Input | Must be HIGH to allow capture |
 
 Inputs are assumed **active-high** with pull-downs.
 
