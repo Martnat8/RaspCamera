@@ -1,36 +1,52 @@
+cat << 'EOF' > focus_check.py
 #!/usr/bin/env python3
-import subprocess
+import os
 import time
+import threading
+import subprocess
 from pathlib import Path
-from camera_utils import _run, GPhotoError
+
+def capture_loop(target_path):
+    print("📸 Automated Focus Loop Started!")
+    print("--------------------------------------------------")
+    print(f"🌐 Server is live. Go to: http://10.0.0.158:8000/latest_focus.jpg")
+    print("Stand at your camera, adjust your lens, and refresh your browser.")
+    print("Press Ctrl+C in this terminal window to stop the loop.")
+    print("--------------------------------------------------\n")
+    
+    try:
+        while True:
+            print(f"[{time.strftime('%H:%M:%S')}] Capturing frame...")
+            # Capture and force overwrite latest_focus.jpg
+            res = os.system(f"gphoto2 --capture-image-and-download --force-overwrite --filename {target_path} > /dev/null 2>&1")
+            
+            if res == 0:
+                print(f"[{time.strftime('%H:%M:%S')}] ✅ Frame updated. (Ready to refresh browser)")
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] ❌ Capture failed. (Camera busy or disconnected)")
+            
+            # 2 second cooldown
+            time.sleep(2)
+            
+    except KeyboardInterrupt:
+        pass
 
 def main():
     target_path = Path("./latest_focus.jpg").resolve()
-    print("📸 Initializing focus check capture...")
-    print("Please ensure main.py is paused so the USB port is free.")
     
-    # 1. Capture a crisp, full-res image to a fixed location
+    # Start the HTTP server in a background thread so it doesn't block our loop
+    server = subprocess.Popen(["python3", "-m", "http.server", "8000"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
     try:
-        _run([
-            "gphoto2",
-            "--capture-image-and-download",
-            "--force-overwrite",
-            "--filename",
-            str(target_path)
-        ], retries=3, timeout_s=30)
-        
-        print(f"✅ Photo captured successfully to: {target_path}")
-        print("\n🌐 Starting temporary image server...")
-        print(f"Open your browser and go to: http://<your-pi-ip>:8000/latest_focus.jpg")
-        print("Press Ctrl+C to close the server when you are done focusing.")
-        
-        # 2. Host a quick local server to view the exact file immediately
-        subprocess.run(["python3", "-m", "http.server", "8000"])
-        
-    except GPhotoError as e:
-        print(f"❌ Failed to capture check image: {e}")
+        # Start the repeating capture sequence
+        capture_loop(target_path)
     except KeyboardInterrupt:
-        print("\nFocus check server stopped.")
+        print("\nStopping focus loop...")
+    finally:
+        # Clean up and shut down the background web server when done
+        server.terminate()
+        print("Focus check server stopped.")
 
 if __name__ == "__main__":
     main()
+EOF
