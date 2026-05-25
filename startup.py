@@ -7,7 +7,8 @@ import sys
 import time
 from pathlib import Path
 
-PHOTOS_DIR = Path("./photos").resolve()
+# Change PHOTOS_DIR to EXPERIMENTS_DIR to clean up the repository root
+EXPERIMENTS_DIR = Path("./experiments").resolve()
 MIN_FREE_GB = 2.0  # change if you want
 
 
@@ -22,7 +23,6 @@ def run(cmd: list[str], *, check: bool = True, timeout: int = 30) -> subprocess.
 
 
 def pkill(pattern: str) -> None:
-    # pkill returns nonzero if nothing matched; that's fine
     subprocess.run(["pkill", "-f", pattern], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -34,23 +34,21 @@ def free_gb(path: Path) -> float:
 def main() -> int:
     print("== Camera startup prep ==")
 
-    # 1) Ensure output directory exists
-    PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"[OK] Photos dir: {PHOTOS_DIR}")
+    # 1) Ensure the experiments directory exists
+    EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"[OK] Experiments dir: {EXPERIMENTS_DIR}")
 
-    # 2) Disk space check
-    gb = free_gb(PHOTOS_DIR)
+    # 2) Disk space check on the actual storage destination
+    gb = free_gb(EXPERIMENTS_DIR)
     print(f"[OK] Free disk: {gb:.2f} GB")
     if gb < MIN_FREE_GB:
         print(f"[FAIL] Not enough free space (< {MIN_FREE_GB} GB).")
         return 2
 
     # 3) Kill common grabbers that steal USB interface 0
-    # (safe to run even if they aren't present)
     for pat in ("gvfsd-gphoto2", "gvfs-gphoto2-volume-monitor", "gphoto2"):
         pkill(pat)
 
-    # Give USB a moment to settle after killing processes
     time.sleep(0.3)
 
     # 4) Verify camera is claimable and responsive
@@ -74,12 +72,11 @@ def main() -> int:
         return 5
 
     print("[OK] gphoto2 --summary succeeded")
-    # Optional: print a short snippet so you can see it’s the right camera
     summary_lines = [ln for ln in p.stdout.splitlines() if ln.strip()]
     for ln in summary_lines[:8]:
         print("   " + ln)
 
-    print("\nREADY: safe to start long run (e.g., python3 test.py)")
+    print("\nREADY: safe to start long run (e.g., python3 main.py)")
     return 0
 
 
