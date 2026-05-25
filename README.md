@@ -220,6 +220,32 @@ http://<raspi-ip-address>:8000
 This allows live viewing of captured images while the experiment is running.
 
 ---
+# Camera Focus & Framing Utility
+
+The repository includes a dedicated real-time adjustment tool (focus_check.py) to easily frame your subject and dial in focus sharpness without polluting or inflating active experiment data logs.
+
+The utility automates a continuous loop that instructs the camera to capture a new photo every 2 seconds, updates a static preview target, and hosts a localized HTTP media server.
+
+## How to Use the Focus Loop
+
+Stop Active Experiments: If main.py is currently running, terminate it using Ctrl + C to release the camera's USB bus interface.
+
+Launch the Focus Tool: Run the script from your terminal:
+python3 focus_check.py
+
+Open the Preview Feed: Open a web browser on any computer or phone connected to the same local network and navigate to:
+http://<your-raspi-ip-address>/latest_focus.jpg
+
+Adjust in Real-Time: Physically adjust your camera's frame or turn the lens focus ring. Every time the terminal prints a ✅ Frame updated confirmation status line, simply Refresh your browser tab (F5 / Cmd + R) to instantly inspect the visual changes.
+
+Exit and Deploy: Once your focus is perfectly crisp, press Ctrl + C in the terminal window to safely kill the testing loop and shutdown the image server, freeing the hardware up for your primary data-collection runs.
+
+## Operational Notes
+
+Zero Overhead: This utility completely overwrites a single file (latest_focus.jpg) over and over. It does not generate bulk tracking folders, keep counter states, or write rows to any experiment data logs.
+
+Network Constraint: Ensure your viewing device is connected to the same local Wi-Fi router network subnet as the Raspberry Pi 5 to view the web page feed.
+
 
 ## Design Goals
 
