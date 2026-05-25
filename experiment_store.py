@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 
-RUN_DIR_RE = re.compile(r"^Run_(\d{8})_(\d{6})$")  # Run_YYYYMMDD_HHMMSS
+RUN_DIR_RE = re.compile(r"^.*_Run-(\d+)$")
 
 
 @dataclass
@@ -202,18 +202,41 @@ class ExperimentStore:
     # ---------- run folder selection ----------
 
     def _create_new_run_dir(self) -> Path:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run = self.base_dir / f"Run_{ts}"
-        run.mkdir(parents=True, exist_ok=False)
-        return run
+            # 1. Figure out what the experiment prefix name is (e.g., "ExpA")
+            prefix = self.base_dir.name
+            
+            # 2. Look through the directory to find existing runs
+            max_idx = 0
+            if self.base_dir.exists():
+                for p in self.base_dir.iterdir():
+                    if p.is_dir():
+                        m = RUN_DIR_RE.match(p.name)
+                        if m:
+                            max_idx = max(max_idx, int(m.group(1)))
+            
+            # 3. Calculate next index and pad with zero (01, 02, etc.)
+            next_idx = max_idx + 1
+            folder_name = f"{prefix}_Run-{next_idx:02d}"
+            
+            # 4. Generate the clean new folder
+            run = self.base_dir / folder_name
+            run.mkdir(parents=True, exist_ok=False)
+            return run
 
     def _find_latest_run_dir(self) -> Optional[Path]:
-        candidates: list[Path] = []
-        for p in self.base_dir.iterdir():
-            if p.is_dir() and RUN_DIR_RE.match(p.name):
-                candidates.append(p)
-        if not candidates:
-            return None
-        # Most reliable: pick by mtime
-        candidates.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-        return candidates[0]
+            candidates: list[tuple[int, Path]] = []
+            if not self.base_dir.exists():
+                return None
+                
+            for p in self.base_dir.iterdir():
+                if p.is_dir():
+                    m = RUN_DIR_RE.match(p.name)
+                    if m:
+                        candidates.append((int(m.group(1)), p))
+                        
+            if not candidates:
+                return None
+                
+            # Sort by the actual run integer index so Run-10 comes after Run-09
+            candidates.sort(key=lambda x: x[0])
+            return candidates[-1][1]
