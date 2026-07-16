@@ -21,6 +21,59 @@ class GPhotoError(RuntimeError):
     pass
 
 
+def find_canon_usb_path() -> Optional[Path]:
+    """
+    Search /sys/bus/usb/devices/ for a device with Canon's Vendor ID (04a9).
+    Returns the Path to the raw device file, e.g. /dev/bus/usb/001/004, or None.
+    """
+    base_sys_path = Path("/sys/bus/usb/devices")
+    if not base_sys_path.exists():
+        return None
+
+    for dev_dir in base_sys_path.iterdir():
+        vendor_file = dev_dir / "idVendor"
+        if not vendor_file.exists():
+            continue
+        try:
+            vendor_id = vendor_file.read_text(encoding="utf-8").strip()
+            if vendor_id.lower() == "04a9":
+                bus_file = dev_dir / "busnum"
+                dev_file = dev_dir / "devnum"
+                if bus_file.exists() and dev_file.exists():
+                    bus_num = int(bus_file.read_text(encoding="utf-8").strip())
+                    dev_num = int(dev_file.read_text(encoding="utf-8").strip())
+                    dev_path = Path(f"/dev/bus/usb/{bus_num:03d}/{dev_num:03d}")
+                    if dev_path.exists():
+                        return dev_path
+        except Exception:
+            pass
+    return None
+
+
+def reset_canon_usb() -> bool:
+    """
+    Locates the connected Canon camera on the USB bus and sends a low-level
+    reset signal (USBDEVFS_RESET) to reboot its USB interface.
+    Returns True if reset was successfully sent, False otherwise.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return False
+
+    dev_path = find_canon_usb_path()
+    if not dev_path:
+        return False
+
+    try:
+        USBDEVFS_RESET = 21780
+        with open(dev_path, "wb") as f:
+            fcntl.ioctl(f.fileno(), USBDEVFS_RESET, 0)
+        return True
+    except Exception:
+        return False
+
+
 def _run(
     cmd: Sequence[str],
     *,
@@ -43,7 +96,12 @@ def _run(
             )
         except subprocess.TimeoutExpired as e:
             last_err = f"TimeoutExpired: {e}"
-            # backoff and retry
+            # If command keeps timing out, attempt low-level USB reset
+            if i >= 1:
+                print(f"[WARN] Command timeout (attempt {i+1}/{retries}). Attempting automated low-level Canon USB reset...")
+                if reset_canon_usb():
+                    print("[INFO] USB reset signal sent successfully. Waiting 2.0 seconds for camera to re-handshake...")
+                    time.sleep(2.0)
             time.sleep(base_delay_s * (i + 1))
             continue
 
@@ -63,9 +121,19 @@ def _run(
             "I/O in progress",
             "Device Busy",
         )
-        if any(m.lower() in stderr.lower() for m in transient_markers) or any(
-            m.lower() in stdout.lower() for m in transient_markers
-        ):
+        combined_output = (stderr + "\n" + stdout).lower()
+        if any(m.lower() in combined_output for m in transient_markers):
+            # If on the 2nd attempt or later (i >= 1) and the error contains hard disconnect signals,
+            # or if on the 3rd attempt or later (i >= 2) for any transient error, try resetting USB.
+            is_hard_error = any(m in combined_output for m in ("ptp i/o error", "could not claim"))
+            if (is_hard_error and i >= 1) or (i >= 2):
+                print(f"[WARN] Connection issue detected (attempt {i+1}/{retries}). Attempting automated low-level Canon USB reset...")
+                if reset_canon_usb():
+                    print("[INFO] USB reset signal sent successfully. Waiting 2.0 seconds for camera to re-handshake...")
+                    time.sleep(2.0)
+                else:
+                    print("[WARN] Could not reset Canon USB device (may not be connected or permission denied).")
+
             time.sleep(base_delay_s * (i + 1))
             continue
 

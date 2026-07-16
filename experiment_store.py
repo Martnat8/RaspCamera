@@ -78,6 +78,11 @@ class ExperimentStore:
         self.next_image_count += 1
         self._save_state()
 
+    def set_trigger_index(self, index: int) -> None:
+        """Manually update the next trigger index and persist state."""
+        self.next_trigger_index = index
+        self._save_state()
+
     def log_trigger_result(
         self,
         *,

@@ -1,257 +1,152 @@
-# Raspberry Pi + Canon EOS T3i Triggered Capture System
+# Raspberry Pi and Canon EOS T3i Triggered Capture System
 
-This repository contains a **crash-resilient image capture system** for a Canon EOS T3i (600D) controlled via **gphoto2** on a **Raspberry Pi 5**.
+This repository provides a crash-resilient, production-grade image capture system for Canon EOS DSLR cameras (specifically validated on the Rebel T3i / 600D) controlled via `gphoto2` on a Raspberry Pi 5 running Raspberry Pi OS Bookworm.
 
-The system is designed to run from a terminal either:
-- directly on a Raspberry Pi with a connected monitor, keyboard, and mouse
-- or remotely over SSH in a headless configuration
-
-> Developed with extensive use of generative AI-assisted coding tools.
-
-The system listens to GPIO trigger lines, conditionally captures images, stores them on the Raspberry Pi, and logs every trigger event for later analysis. It is designed for **long-running experiments** and supports clean resume after crashes or reboots.
+The system is designed for long-running scientific and industrial experiments. It operates seamlessly in headless, remote configurations over SSH or locally with a dedicated monitor. It monitors hardware GPIO inputs, executes atomic data logging, manages persistent storage indices, and includes automated USB self-healing mechanisms to recover from hardware timeouts or power-saving states.
 
 ---
 
-## Features
+## Key Features
 
-- Terminal-based operation (local monitor or SSH)
-- Canon EOS capture via `gphoto2`
-- GPIO-controlled triggering
-- Enable / disable gating
-- One capture per rising edge
-- Safe re-arming on falling edge
-- Automatic run folder creation
-- Resume after crash or reboot
-- CSV trigger log with persistent state
-- No image overwrites
-- Retry handling for transient camera communication errors
+* **Subprocess Isolation:** Avoids memory leaks and driver socket degradation by running ephemeral, OS-managed `gphoto2` CLI sessions instead of persistent background wrappers.
+* **Low-Level USB Self-Healing:** Automatically detects USB/PTP communication lockups and sends raw `USBDEVFS_RESET` signals directly to the camera's USB bus interface, enabling seamless long-term operation.
+* **Atomic File & State Persistence:** Writes state data to a temporary file before performing an atomic swap to protect against sudden power loss or system crashes.
+* **Interactive Trigger Customization:** Offers terminal menu prompts to review, confirm, or manually update the next trigger counter index when resuming a session.
+* **Dual-State Gated Capture:** Separates hardware triggers from active capture states via an Enable Gate, logging all event timestamps even when physical capture is bypassed.
+* **Live Focus and Framing Utility:** Includes a low-overhead, concurrent local HTTP server utility for real-time framing and focus adjustments.
 
 ---
 
-## Tested On
+## Hardware Configuration and Wiring
 
-- Raspberry Pi 5
-- Raspberry Pi OS Bookworm
-- Canon EOS Rebel T3i (600D)
+### Camera Settings
+* **Model:** Canon EOS Rebel T3i (600D) or compatible DSLR
+* **Focus Mode:** Manual Focus (MF)
+* **Exposure Mode:** Manual (M)
+* **Auto Power-Off:** Disabled (Off)
+* **Image Review:** Disabled (Off)
 
----
+### GPIO Pin Mapping
+The Raspberry Pi 5 GPIO pins are configured with internal/external pull-down resistors (active-high logic):
 
-## Quick Start
-
-On a fresh Raspberry Pi OS installation:
-
-```bash
-sudo apt install -y git
-
-git clone <repo-url>
-cd <repo-name>
-
-chmod +x setup.sh
-./setup.sh
-```
-
-# Navigate to the project directory
-cd /path/to/your/repo-name
-
-# 1. Clear background processes and check camera connection
-python3 startup.py
-
-# 2. Run the experiment (terminal will prompt user input)
-python3 main.py
-
-# To STOP the experiment at any time: Press Ctrl + C
-
----
-
-## Hardware Setup
-
-### Camera
-
-- Canon EOS Rebel T3i (600D)
-- USB connected to Raspberry Pi
-- Lens in **MF**
-- Mode dial set to **M**
-- Auto power-off **disabled**
-- Image review **off**
-
-### GPIO
-
-### GPIO
-
-| Signal | GPIO | Wire Color | Direction | Notes |
-|---|---|---|---|---|
-| TRIGGER | 17 | Yellow | Input | Rising edge triggers capture |
-| ENABLE | 27 | Green | Input | Must be HIGH to allow capture |
-
-Inputs are assumed **active-high** with pull-downs.
+| Signal Name | Broadcom GPIO | Default Direction | Wiring Notes |
+| :--- | :--- | :--- | :--- |
+| **TRIGGER** | GPIO 17 | Input (Active-High) | Rising edge initiates the capture block. Requires falling-edge release before re-arming. |
+| **ENABLE** | GPIO 27 | Input (Active-High) | Gating line. Must be logic HIGH to activate physical capture. If logic LOW, the trigger is logged but no photo is taken. |
 
 ---
 
 ## Repository Structure
 
-```
+```text
 .
-├── camera_utils.py        # gphoto2 helpers and retry logic
-├── experiment_store.py    # Run folder management, counters, CSV logging, resume logic
-├── startup.py             # One-time system preparation for long runs
-├── main.py                # GPIO-driven experiment runner
-├── setup.sh               # Automated Raspberry Pi setup script
-└── README.md
+├── main.py              # Core application orchestrator and GPIO polling loop
+├── camera_utils.py      # Low-level gphoto2 execution and USB self-healing logic
+├── experiment_store.py  # Run management, atomic state persistence, and CSV logging
+├── startup.py           # Pre-flight health, disk space check, and USB grabber cleanup
+├── focus_check.py       # Live framing preview stream and local HTTP media server
+├── test.py              # Test script for camera verification and summary
+├── setup.sh             # Automatic system package installer and environment setup
+├── agents.md            # Reference guide and architectural constraints for developer agents
+└── README.md            # System documentation
 ```
 
 ---
 
-## How It Works
+## Run Folder Architecture
 
-### Trigger Logic
-
-- Rising edge on **TRIGGER**
-- If **ENABLE = HIGH** → capture image
-- If **ENABLE = LOW** → no capture
-- Must see **TRIGGER** return **LOW** before re-arming
-- Trigger count always increments
-- Image count increments **only on successful capture**
-
-### File Naming
-
-Images are saved as:
+Each experiment run generates a dedicated, sequentially indexed subfolder inside the root data directory to prevent accidental data overwrites:
 
 ```text
-DDMMYYYY_00001.jpg
-```
-
----
-
-## Run Folder Layout
-
-Each experiment run creates a dedicated folder inside the user-provided base directory:
-
-```text
-experiments/<EXPERIMENT-NAME>/
-└──<EXPERIMENT-NAME>_Run_<#>/
+experiments/[EXPERIMENT_NAME]/
+└── [EXPERIMENT_NAME]_Run-[Index]/
     ├── photos/
-    │   ├── DDMMYYYY_00001.jpg
-    │   ├── DDMMYYYY_00002.jpg
+    │   ├── [DDMMYYYY]_[Index].jpg
+    │   └── [DDMMYYYY]_[Index + 1].jpg
     ├── log.csv
     └── state.json
 ```
 
-### `log.csv`
-
-One row is written **per trigger event**, regardless of whether an image was captured:
-
-```text
+### Event Log (`log.csv`)
+An entry is appended immediately upon every trigger rising edge. This ensures auditing integrity:
+```csv
 timestamp,trigger_index,enable_state,captured,filename
+2026-07-16T10:00:00.123,1,1,1,16072026_00001.jpg
+2026-07-16T10:00:05.456,2,0,0,
 ```
 
-### `state.json`
-
-Stores persistent state to allow clean resume after interruption:
-
-- Next image index
-- Next trigger index
-- Run directory path
-- Last update timestamp
+### Persistent State (`state.json`)
+Maintains session state variables across program invocations, protecting index continuity from power failures:
+```json
+{
+  "next_image_count": 3,
+  "next_trigger_index": 3,
+  "run_dir": "/home/pi/RaspCamera/experiments/ExpA/ExpA_Run-01",
+  "updated": "2026-07-16T10:00:05"
+}
+```
 
 ---
 
-## Usage
+## Installation and Setup
 
-### 1. Prepare the System
+Execute the automated script on a fresh installation of Raspberry Pi OS to install dependencies and configure the environment:
 
-Run once after boot to ensure the camera and system are ready for a long experiment:
+```bash
+git clone <repository-url>
+cd RaspCamera
+chmod +x setup.sh
+./setup.sh
+```
 
+The script automatically:
+1. Installs system binaries (`gphoto2`, `libgphoto2-dev`, `python3-gpiozero`, etc.).
+2. Purges the OS camera volume-monitor services (`gvfs-backends`) which frequently lock camera USB interfaces.
+3. Grants executable permissions to all Python modules.
+
+---
+
+## Execution Guide
+
+### 1. Pre-Flight Diagnostic Check
+Before starting a long experiment session, run the startup helper to verify hardware readiness, release blocked USB ports, and check local disk storage space:
 ```bash
 python3 startup.py
 ```
 
-### 2. Start a New Experiment Run
-
-Creates a new run folder inside the specified base directory:
-
+### 2. Launch the Capture Engine
+Run the primary execution loop:
 ```bash
-python3 main.py 
+python3 main.py
 ```
 
+If command-line arguments are omitted, the application will launch an interactive setup guide:
+* **Experiment Run Name:** Enter a run name (defaults to `ExpA`).
+* **Execution Mode:**
+  1. **Resume (Default):** Reconnects to the last active run folder, loads state counters, and prompts you to review or manually override the starting trigger count index.
+  2. **Restart:** Wipes historical local memory buffers and starts a completely fresh run index.
 
-Resume behavior:
-
-- Image numbering continues from the last successful capture
-- Trigger indexing continues from the last trigger
-- New entries are appended to `log.csv`
-- Existing images are never overwritten
-
-### Stop the Experiment
-
-```text
-Ctrl + C
-```
-
----
-
-## Viewing Images Over SSH
-
-When running over SSH, images cannot be displayed directly in the terminal. A simple workaround is to temporarily serve the image directory over HTTP.
-
-From the image directory:
-
+To run headlessly or bypass interactive prompt menus (e.g., in automated systemd service environments):
 ```bash
-python3 -m http.server 8000
+python3 main.py --base ./experiments/ExpA --mode resume
 ```
 
-Then, from another computer on the same network, open:
-
-```text
-http://<raspi-ip-address>:8000
-```
-
-This allows live viewing of captured images while the experiment is running.
-
----
-# Camera Focus & Framing Utility
-
-The repository includes a dedicated real-time adjustment tool (focus_check.py) to easily frame your subject and dial in focus sharpness without polluting or inflating active experiment data logs.
-
-The utility automates a continuous loop that instructs the camera to capture a new photo every 2 seconds, updates a static preview target, and hosts a localized HTTP media server.
-
-## How to Use the Focus Loop
-
-Stop Active Experiments: If main.py is currently running, terminate it using Ctrl + C to release the camera's USB bus interface.
-
-Launch the Focus Tool: Run the script from your terminal:
-python3 focus_check.py
-
-Open the Preview Feed: Open a web browser on any computer or phone connected to the same local network and navigate to:
-http://<your-raspi-ip-address>/latest_focus.jpg
-
-Adjust in Real-Time: Physically adjust your camera's frame or turn the lens focus ring. Every time the terminal prints a ✅ Frame updated confirmation status line, simply Refresh your browser tab (F5 / Cmd + R) to instantly inspect the visual changes.
-
-Exit and Deploy: Once your focus is perfectly crisp, press Ctrl + C in the terminal window to safely kill the testing loop and shutdown the image server, freeing the hardware up for your primary data-collection runs.
-
-## Operational Notes
-
-Zero Overhead: This utility completely overwrites a single file (latest_focus.jpg) over and over. It does not generate bulk tracking folders, keep counter states, or write rows to any experiment data logs.
-
-Network Constraint: Ensure your viewing device is connected to the same local Wi-Fi router network subnet as the Raspberry Pi 5 to view the web page feed.
-
-
-## Design Goals
-
-- Deterministic behavior
-- Safe recovery after failure
-- Explicit separation of:
-  - Hardware triggers
-  - Capture logic
-  - Data storage
-- Auditability for experiments
-- Long-duration experiment stability
+To stop the experiment safely at any point, use `Ctrl + C`.
 
 ---
 
-## Notes
+## Real-Time Focus and Framing Utility
 
-- Images are stored **only on the Raspberry Pi**, not retained on the camera SD card
-- Canon EOS remote capture behavior varies by model; this setup has been validated on the T3i
-- For very long runs, use a dummy battery / DC coupler
-- Desktop camera auto-mounting can interfere with `gphoto2`; `setup.sh` removes common USB camera grabbers automatically
+To adjust focus, lens calibration, or framing without affecting experiment data counters or logs:
 
+1. Terminate any active execution of `main.py` using `Ctrl + C`.
+2. Start the focusing module:
+   ```bash
+   python3 focus_check.py
+   ```
+3. Open a web browser on any machine connected to the same local network and visit:
+   ```text
+   http://[RASPBERRY_PI_IP_ADDRESS]:8000/latest_focus.jpg
+   ```
+4. Adjust the camera lens. The module continuously updates the target image every 2 seconds. Simply refresh your browser tab to check clarity.
+5. Exit using `Ctrl + C` to shut down the preview engine and release the camera interface for standard capture runs.

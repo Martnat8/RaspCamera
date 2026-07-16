@@ -113,6 +113,26 @@ def main() -> None:
 
     store = ExperimentStore(base_dir, mode=run_mode)
 
+    if run_mode == "resume":
+        print(f"Current trigger count: {store.next_trigger_index}")
+        update_ans = input("Do you need to update it? (y/n) [Default: n]: ").strip().lower()
+        if update_ans in ("y", "yes"):
+            while True:
+                try:
+                    new_count_str = input("Enter the trigger count number: ").strip()
+                    if not new_count_str:
+                        print("Invalid input: Cannot be empty.")
+                        continue
+                    new_count = int(new_count_str)
+                    if new_count < 1:
+                        print("Trigger count must be at least 1.")
+                        continue
+                    store.set_trigger_index(new_count)
+                    print(f"Trigger count updated to: {store.next_trigger_index}")
+                    break
+                except ValueError:
+                    print("Invalid input. Please enter a valid integer number.")
+
     enable = DigitalInputDevice(ENABLE_GPIO, pull_up=False)
     trigger = DigitalInputDevice(TRIGGER_GPIO, pull_up=False)
 
